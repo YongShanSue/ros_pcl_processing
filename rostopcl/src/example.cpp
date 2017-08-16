@@ -7,19 +7,23 @@
 #include "pcl_ros/point_cloud.h"
 ros::Publisher pub;
 ros::Publisher pointcloudXYZ;
-
+ros::Publisher pointcloud2_publisher;
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
 void  cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 {
 	 // Create a container for the data.
  	sensor_msgs::PointCloud2 output;
+ 	sensor_msgs::PointCloud2 pcl_to_ros_pointcloud2;
+
 	// Do data processing here...
 	output = *input;
 	pcl::PointCloud<pcl::PointXYZ> cloud;
 	pcl::fromROSMsg (*input, cloud);
-     	// Publish the data.
-     	pub.publish (output);
+    pcl::toROSMsg(cloud, pcl_to_ros_pointcloud2);
+
+    pub.publish (output);
 	pointcloudXYZ.publish(cloud);
+	pointcloud2_publisher.publish(pcl_to_ros_pointcloud2);
 	ROS_INFO("Success output");
 }   
 int   main (int argc, char** argv)
@@ -31,7 +35,8 @@ int   main (int argc, char** argv)
      ros::Subscriber sub = nh.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, cloud_cb);
      // Create a ROS publisher for the output point cloud
      pub = nh.advertise<sensor_msgs::PointCloud2> ("output", 1); 
-     pointcloudXYZ = nh.advertise<PointCloudXYZ> ("pointcloudXYZ", 1);
+     pointcloudXYZ = nh.advertise<PointCloudXYZ> ("ros_pointcloudxyz", 1);
+     pointcloud2_publisher = nh.advertise<sensor_msgs::PointCloud2> ("pcltoros_pointcloud2", 1);
      // Spin
      ros::spin ();
   }
