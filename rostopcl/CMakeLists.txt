@@ -197,5 +197,7 @@ include_directories(
 # endif()
 add_executable(example src/example.cpp)
 target_link_libraries(example ${catkin_LIBRARIES})
+add_executable(icp_example src/icp_example.cpp)
+target_link_libraries(icp_example ${catkin_LIBRARIES})
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
