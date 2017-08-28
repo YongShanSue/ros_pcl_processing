@@ -12,6 +12,10 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
   roscpp
   sensor_msgs
+  cv_bridge
+  image_transport
+  std_msgs
+  rospy
 )
 
 ## System dependencies are found with CMake's conventions
@@ -201,3 +205,5 @@ add_executable(icp_example src/icp_example.cpp)
 target_link_libraries(icp_example ${catkin_LIBRARIES})
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
+add_executable(example_test src/example_test.cpp)
+target_link_libraries(example_test ${catkin_LIBRARIES})
