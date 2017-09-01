@@ -12,6 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
   roscpp
   sensor_msgs
+  geometry_msgs
   cv_bridge
   image_transport
   std_msgs
@@ -207,3 +208,9 @@ target_link_libraries(icp_example ${catkin_LIBRARIES})
 # catkin_add_nosetests(test)
 add_executable(example_test src/example_test.cpp)
 target_link_libraries(example_test ${catkin_LIBRARIES})
+
+add_executable(save_pcd src/save_pcd.cpp)
+target_link_libraries(save_pcd ${catkin_LIBRARIES})
+
+add_executable(icp_example2 src/icp_example2.cpp)
+target_link_libraries(icp_example2 ${catkin_LIBRARIES})

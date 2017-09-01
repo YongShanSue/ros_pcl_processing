@@ -8,6 +8,8 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/image_encodings.h>
+#include <nav_msgs/Path.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -28,6 +30,7 @@
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
 #include <image_transport/image_transport.h>
+#include <pcl/io/pcd_io.h>
 
 using namespace message_filters;
 using namespace cv;
@@ -35,15 +38,14 @@ using namespace std;
 
 ros::Publisher hsv_mask;
 ros::Publisher hsv_object_detection;
-ros::Publisher pointcloudXYZ1;
-ros::Publisher pointcloudXYZ2;
-ros::Publisher pointcloudicp;
+ros::Publisher pointcloud_now_publisher;
+ros::Publisher pointcloud_model_publisher;
+ros::Publisher path_publisher;
 
-pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_icp_t0 (new pcl::PointCloud<pcl::PointXYZ>);
-//cloud_icp_t0->points.resize(0);
-pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_icp_t1 (new pcl::PointCloud<pcl::PointXYZ>);
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_icp_model (new pcl::PointCloud<pcl::PointXYZ>);
+nav_msgs::Path path;
 
-//cloud_icp_t1->points.resize(0);
+
 struct  timeval    start;
 struct  timeval   stop; 
 double time_diff;
@@ -52,7 +54,6 @@ typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
 void  cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image1)
 {	
 	gettimeofday(&stop,NULL);
-	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_icp_final (new pcl::PointCloud<pcl::PointXYZ>);
 	time_diff =  (stop.tv_sec-start.tv_sec)+ (stop.tv_usec-start.tv_usec)/1000000.0;
 	printf("wainting_time is %f\n",time_diff);
 	gettimeofday(&start,NULL);
@@ -60,9 +61,7 @@ void  cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs
 	 // Create a container for the data.
 	//detect the object
 	cv_bridge::CvImagePtr cv_ptr;
- 
 	Mat hsv ,hsv_detected_object ;
-
 
 	gettimeofday(&start,NULL);
     cv_ptr = cv_bridge::toCvCopy(image1, sensor_msgs::image_encodings::BGR8);	
@@ -72,7 +71,7 @@ void  cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs
 	cvtColor(cv_ptr->image,hsv,CV_BGR2HSV);
 	inRange(hsv,Scalar(170,250,80) , Scalar(180,255,255), hsv_range_mask);		//red range1
 	inRange(hsv,Scalar(0,250,80) , Scalar(1,255,255), hsv_range_mask_2);		//red range2
-	 bitwise_or(hsv_range_mask,hsv_range_mask_2, hsv_range_mask_2);
+	bitwise_or(hsv_range_mask,hsv_range_mask_2, hsv_range_mask_2);
 
 	for(int row=1;row<cv_ptr->image.rows;row++){
 		for(int column=1;column<cv_ptr->image.cols;column++){
@@ -86,96 +85,57 @@ void  cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs
 	//cv_ptr->image.copyTo(test,hsv_range_mask );
 
 	hsv_object_detection.publish(cv_ptr->toImageMsg());
-	gettimeofday(&stop,NULL);
-	time_diff = (stop.tv_sec-start.tv_sec)+ stop.tv_usec-start.tv_usec;
-	printf("generate_hsv_mask1_time is %ld\n",time_diff);
-    
-	gettimeofday(&start,NULL);
+
 	cv_bridge::CvImagePtr cv_ptr2;
  	cv_ptr2 = cv_bridge::toCvCopy(image1, sensor_msgs::image_encodings::BGR8);	
 	cv_ptr2->header   = cv_ptr->header; // Same timestamp and tf frame as input image
 	cv_ptr2->encoding = sensor_msgs::image_encodings::MONO8; // Or whatever
 	cv_ptr2->image    = hsv_range_mask; // Your cv::Mat
 	hsv_mask.publish(cv_ptr2->toImageMsg());
-	gettimeofday(&stop,NULL);
-	time_diff =  (stop.tv_sec-start.tv_sec)+ (stop.tv_usec-start.tv_usec)/1000000.0;
-	printf("generate_hsv_mask2_time is %f\n",time_diff);
-
-
-	//free memory
-	//hsv_range_mask.release();
-	//hsv.release();
-	//hsv_detected_object.release();
-
-
-
-	gettimeofday(&start,NULL);
- 	sensor_msgs::PointCloud2 output;
- 	sensor_msgs::PointCloud2 pcl_to_ros_pointcloud2;
-
-	// Do data processing here...
- 	
+ 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_icp_final (new pcl::PointCloud<pcl::PointXYZ>);
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_now (new pcl::PointCloud<pcl::PointXYZ>);
+ 	gettimeofday(&stop,NULL);
+	time_diff = (stop.tv_sec-start.tv_sec)+ stop.tv_usec-start.tv_usec;
+	printf("generate_hsv_mask1_time is %ld\n",time_diff);
+    
+	gettimeofday(&start,NULL);	
  
-
-	output = *input;
 	pcl::PointCloud<pcl::PointXYZ> cloud;
 	pcl::fromROSMsg (*input, cloud);
-	if(cloud_icp_t0->points.size()==0){
-		pcl::copyPointCloud(cloud,*cloud_icp_t0);
-		//hsv filtering
-		for(int row=0;row<cv_ptr->image.rows;row++){
-			for(int column=0;column<cv_ptr->image.cols;column++){
-				if(hsv_range_mask.at<uchar>(row+1,column+1)<127){
-					cloud_icp_t0->points[row*cv_ptr->image.cols+column].x = std::numeric_limits<float>::quiet_NaN();
-					cloud_icp_t0->points[row*cv_ptr->image.cols+column].y = std::numeric_limits<float>::quiet_NaN();
-					cloud_icp_t0->points[row*cv_ptr->image.cols+column].z = std::numeric_limits<float>::quiet_NaN();
-				}
+	pcl::copyPointCloud(cloud,*cloud_now);
+	//hsv filtering
+	for(int row=0;row<cv_ptr->image.rows;row++){
+		for(int column=0;column<cv_ptr->image.cols;column++){
+			if(hsv_range_mask.at<uchar>(row+1,column+1)<127){
+				cloud_now->points[row*cv_ptr->image.cols+column].x = std::numeric_limits<float>::quiet_NaN();
+				cloud_now->points[row*cv_ptr->image.cols+column].y = std::numeric_limits<float>::quiet_NaN();
+				cloud_now->points[row*cv_ptr->image.cols+column].z = std::numeric_limits<float>::quiet_NaN();
 			}
 		}
-		pcl::copyPointCloud(*cloud_icp_t0,*cloud_icp_t1);
-		ROS_INFO("initial");
 	}
-	else{
 
-		pcl::copyPointCloud(*cloud_icp_t1,*cloud_icp_t0);
-		pcl::copyPointCloud(cloud,*cloud_icp_t1);	
-		//hsv filtering
-		for(int row=0;row<cv_ptr->image.rows;row++){
-			for(int column=0;column<cv_ptr->image.cols;column++){
-				if(hsv_range_mask.at<uchar>(row+1,column+1)<127){
-					cloud_icp_t1->points[row*cv_ptr->image.cols+column].x = std::numeric_limits<float>::quiet_NaN();
-					cloud_icp_t1->points[row*cv_ptr->image.cols+column].y = std::numeric_limits<float>::quiet_NaN();
-					cloud_icp_t1->points[row*cv_ptr->image.cols+column].z = std::numeric_limits<float>::quiet_NaN();
-				}
-			}
-		}	
-		//ROS_INFO("keep runnig");
-	}
 	gettimeofday(&stop,NULL);
 	time_diff =  (stop.tv_sec-start.tv_sec)+ (stop.tv_usec-start.tv_usec)/1000000.0;
 	printf("pointcloud_hsv_filtering_time is %f\n",time_diff);
 
 
-	gettimeofday(&start,NULL);
+	//gettimeofday(&start,NULL);
 	std::vector<int> temp; 
-	printf("Original t0 Size: %d %d %d\n",cloud_icp_t0->points.size(),cloud_icp_t0->width,cloud_icp_t0->height);
-	printf("Original t1 Size: %d %d %d\n",cloud_icp_t1->points.size(),cloud_icp_t1->width,cloud_icp_t1->height);
-	pcl::removeNaNFromPointCloud(*cloud_icp_t1, *cloud_icp_t1, temp); 
-	pcl::removeNaNFromPointCloud(*cloud_icp_t0, *cloud_icp_t0, temp); 
-	printf("Filtered t0 Size: %d %d %d\n",cloud_icp_t0->points.size(),cloud_icp_t0->width,cloud_icp_t0->height);
-	printf("Filtered t1 Size: %d %d %d\n",cloud_icp_t1->points.size(),cloud_icp_t1->width,cloud_icp_t1->height);
-
+	printf("Original point Size: %d %d %d\n",cloud_now->points.size(),cloud_now->width,cloud_now->height);	
+	pcl::removeNaNFromPointCloud(*cloud_now, *cloud_now, temp); 
+	printf("Filtered point Size: %d %d %d\n",cloud_now->points.size(),cloud_now->width,cloud_now->height);
+	
 	pcl::PointCloud<pcl::PointXYZ>::Ptr registration_result (new pcl::PointCloud<pcl::PointXYZ>);
 	pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
 	pcl::search::KdTree<pcl::PointXYZ>::Ptr tree1 (new pcl::search::KdTree<pcl::PointXYZ>);
-	tree1->setInputCloud(cloud_icp_t0);
+	tree1->setInputCloud(cloud_now);
 	pcl::search::KdTree<pcl::PointXYZ>::Ptr tree2 (new pcl::search::KdTree<pcl::PointXYZ>);
-	tree2->setInputCloud(cloud_icp_t1);
+	tree2->setInputCloud(cloud_icp_model);
 	
 	icp.setSearchMethodSource(tree1);
 	icp.setSearchMethodTarget(tree2);
-	icp.setInputSource(cloud_icp_t0);
-	icp.setInputTarget(cloud_icp_t1);
+	icp.setInputSource(cloud_now);
+	icp.setInputTarget(cloud_icp_model);
 	icp.setMaxCorrespondenceDistance(1500);
 	icp.setTransformationEpsilon(1e-10);
 	icp.setEuclideanFitnessEpsilon(0.1);
@@ -186,23 +146,22 @@ void  cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs
 
 	float x, y, z, roll, pitch, yaw;
 	pcl::getTranslationAndEulerAngles(tROTA, x, y, z, roll, pitch, yaw);	
-	/*
-	pcl::copyPointCloud(*cloud_icp_t1,*cloud_icp_final);
-	cloud_icp_final->points.resize (cloud_icp_t1->width+registration_result->width);
-	for(int i=0;i<cloud_icp_t1->width;i++){
-		cloud_icp_final->points[i]=(cloud_icp_t1->points[i]);
-	}
-	for(int i=0;i<registration_result->width;i++)
-		cloud_icp_final->points[i+cloud_icp_t1->width]=(registration_result->points[i]);
-	cloud_icp_final->points.resize (cloud_icp_t1->width+registration_result->width);
-	*/
-	//pcl::PointCloud<pcl::PointXYZ> icp_result;
-	//pcl::copyPointCloud(*registration_result,icp_result);
+	
+	geometry_msgs::PoseStamped p;
+	p.header.stamp = ros::Time();
+	printf("%lf %lf %lf \n",x,y,z);
+	p.pose.position.x = x;
+ 	p.pose.position.y = y;
+	p.pose.position.z = z; // 1 meter
+	path.poses.push_back(p);
+	
+
+	path_publisher.publish(path);
+
 	gettimeofday(&stop,NULL);
 	time_diff =  (stop.tv_sec-start.tv_sec)+ (stop.tv_usec-start.tv_usec)/1000000.0;
 	printf("ICP_time is %f\n",time_diff);
 
-	printf("ICP point Size: %d %d %d\n",cloud_icp_final->points.size(),cloud_icp_final->width,cloud_icp_final->height);
     printf("x: %lf, y: %lf, z: %lf, roll: %lf, pitch: %lf, yaw: %lf\n",x, y, z, roll, pitch, yaw);
     FILE *fPtr;
     fPtr = fopen("transformation.txt", "a");
@@ -213,20 +172,18 @@ void  cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs
     fprintf(fPtr, "x: %lf, y: %lf, z: %lf, roll: %lf, pitch: %lf, yaw: %lf\n",x, y, z, roll, pitch, yaw);
     
     fclose(fPtr);
-    //pcl::toROSMsg(cloud, pcl_to_ros_pointcloud2);
 	std::cout << transformation << std::endl;
-    //pub.publish (output);
-	pointcloudXYZ1.publish(*cloud_icp_t0);
-	pointcloudXYZ2.publish(*cloud_icp_t1);
-	pointcloudicp.publish(*cloud_icp_final);
+	pointcloud_now_publisher.publish(*cloud_now);
+	pointcloud_model_publisher.publish(*cloud_icp_model);
 	ROS_INFO("Success output");
 	
 }   
 int   main (int argc, char** argv)
 {
      // Initialize ROS
-	 cloud_icp_t0->points.resize(0);
-	 cloud_icp_t1->points.resize(0);
+	path.header.frame_id="/map";
+	 pcl::io::loadPCDFile<pcl::PointXYZ> ("1.pcd", *cloud_icp_model);
+	 printf("Model Size: %d %d %d\n",cloud_icp_model->points.size(),cloud_icp_model->width,cloud_icp_model->height);
      ros::init (argc, argv, "my_pcl_tutorial");
      ros::NodeHandle nh;   
      // Create a ROS subscriber for the input point cloud
@@ -234,9 +191,10 @@ int   main (int argc, char** argv)
      // Create a ROS publisher for the output point cloud
      hsv_object_detection = nh.advertise<sensor_msgs::Image> ("hsv_object_detection", 1); 
      hsv_mask = nh.advertise<sensor_msgs::Image> ("hsv_mask", 1); 
-     pointcloudXYZ1 = nh.advertise<PointCloudXYZ> ("ros_pointcloudxyz_t0", 1);
-     pointcloudXYZ2 = nh.advertise<PointCloudXYZ> ("ros_pointcloudxyz_t1", 1);
-     pointcloudicp = nh.advertise<PointCloudXYZ> ("icp_result", 1);
+     pointcloud_now_publisher= nh.advertise<PointCloudXYZ> ("cloud_now", 1);
+     pointcloud_model_publisher = nh.advertise<PointCloudXYZ> ("cloud_icp_model", 1);
+     path_publisher = nh.advertise<nav_msgs::Path> ("cloud_path", 1);
+    //pointcloudicp = nh.advertise<PointCloudXYZ> ("icp_result", 1);
      ///Synchonizer
      message_filters::Subscriber<sensor_msgs::PointCloud2> depth_point(nh,"/camera/depth/points", 10);
      message_filters::Subscriber<sensor_msgs::Image> image_sub(nh, "/camera/rgb/image_rect_color", 10);
